@@ -50,8 +50,8 @@ mcp = MCPServer(
 def lookup_player(first_name: str, last_name: str) -> list[dict]:
     """Find MLB players by name and return their IDs.
 
-    Call this FIRST whenever the user names a player: season_stats and
-    pitch_mix both need the `mlbam_id` it returns.
+    Call this FIRST whenever the user names a player: season_stats,
+    pitch_mix and similar_pitches all need the `mlbam_id` it returns.
     Several players can share a name -- if more than one comes back, use
     the years played to pick the right one, or ask the user.
     """
@@ -59,6 +59,7 @@ def lookup_player(first_name: str, last_name: str) -> list[dict]:
         df = pybaseball.playerid_lookup(last_name.strip(), first_name.strip(), fuzzy=True)
     if df.empty:
         return []
+    df = df.drop_duplicates(subset="key_mlbam")
     return [
         {
             "name": f"{r.name_first} {r.name_last}".title(),

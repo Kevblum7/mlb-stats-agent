@@ -21,9 +21,12 @@ question ──> agent (OpenAI Agents SDK, gpt-4.1-mini)
                │  picks a tool, reads the result, repeats (max 10 turns)
                ▼
             MCP client ──stdio──> server.py (MCP server)
-                                    ├─ lookup_player ──> Chadwick player register (pybaseball)
-                                    ├─ season_stats  ──> MLB Stats API
-                                    └─ pitch_mix     ──> Statcast (pybaseball)
+                                    ├─ lookup_player   ──> Chadwick player register (pybaseball)
+                                    ├─ season_stats    ──> MLB Stats API
+                                    ├─ pitch_mix       ──> Statcast (pybaseball)
+                                    ├─ similar_pitches ──> local index of Statcast pitch profiles
+                                    ├─ search_news     ──> local index of MLB transactions
+                                    └─ search_scouting ──> local index of your scouting reports
 ```
 
 | Tool | What it returns |
@@ -31,6 +34,9 @@ question ──> agent (OpenAI Agents SDK, gpt-4.1-mini)
 | `lookup_player` | Up to 5 players matching a name, with their MLB ids and years played. |
 | `season_stats` | One player's regular-season totals. Batting: G, PA, HR, AVG, OBP, SLG, OPS. Pitching: G, IP, ERA, WHIP, K, BB, K%, BB%. |
 | `pitch_mix` | Each pitch type a pitcher threw over a date range, with count, usage % and average velocity. |
+| `similar_pitches` | The pitches most similar to one pitcher's pitch ("whose slider looks like Edwin Díaz's?"), by velocity, spin, movement and release point. |
+| `search_news` | Transactions (IL moves, trades, signings, options) matching a question, ranked by meaning and recency, with dates. |
+| `search_scouting` | Scouting-report excerpts matching a description ("plus changeup, shaky command"), filterable by team and position. |
 
 The agent starts `server.py` as a subprocess and talks to it over stdin/stdout.
 The model never sees the tool code, only each tool's name, parameter schema and
@@ -55,6 +61,19 @@ You can also call a tool directly, without the model:
 ```bash
 python -c "import server; print(server.season_stats(624413, 2025))"
 ```
+
+The three search tools read local indexes in `data/`, which isn't committed.
+Build each one before using its tool; until then the tool returns the command
+to run.
+
+```bash
+python -m news.transactions --days 120                         # MLB transactions; refresh to stay current
+python -m comps.pitches --start 2026-03-26 --end 2026-09-28    # one season of Statcast, ~4 minutes
+python -m scouting.reports    # creates data/scouting/reports.csv; add reports, then run again
+```
+
+The news and scouting indexes use OpenAI embeddings (`text-embedding-3-small`).
+Scouting reports aren't included because published reports are copyrighted.
 
 ## Design decisions
 
@@ -90,10 +109,32 @@ python -c "import server; print(server.season_stats(624413, 2025))"
   what should survive is which players and seasons are being discussed. Stat
   numbers can always be fetched again.
 
+## Search tools
+
+The three search tools share one small vector store (`search/store.py`): each
+item is a list of numbers, and items whose numbers point the same way are
+similar.
+
+- **`similar_pitches`** builds those numbers from Statcast averages per
+  pitcher and pitch type, rather than from a text model. Left-handed pitches
+  are mirrored so shapes compare across arms, and each feature is scaled
+  within its pitch type. The current index covers the 2026 regular season:
+  716,534 pitches, giving 2,584 profiles with at least 50 pitches each.
+- **`search_news`** embeds MLB's official transactions feed and ranks results
+  by a blend of meaning (75%) and recency (25%). Every response says how
+  current the data is. The current index has 19,437 transactions from the last
+  120 days.
+- **`search_scouting`** embeds scouting reports you collect. Long reports are
+  split by paragraph, and each chunk keeps the player's name, team and
+  position.
+
+Filters such as team or position are applied before ranking, so a filtered
+search still returns its full number of results.
+
 ## Evals
 
-`evals/run_evals.py` runs the real agent on 13 questions and grades each answer
-with code-based checks:
+`evals/run_evals.py` runs the real agent on 17 questions and grades each answer
+with code-based checks. Thirteen cover the stats tools:
 
 - **Single lookups:** a hitter's season, a pitcher's ERA, a traded player's
   full-season total.
@@ -107,6 +148,11 @@ with code-based checks:
   - a season that hasn't been played
   - a hitter's pitch mix
 
+Four more (`evals/addon_cases.py`) check that the agent picks the right search
+tool: pitch comps, scouting, news, and a question that needs scouting plus
+stats. These four only check the process, so they don't depend on what's in
+the indexes.
+
 Each case checks the **process** as well as the **outcome**. Outcome checks
 compare numbers in the answer against true values. Process checks confirm that
 the right tools were called with the right arguments, not just that a tool name
@@ -116,8 +162,16 @@ answer is attributed to the right player.
 
 ### Results
 
-**102 of 102 checks passed** across three runs of all 13 cases, using
-`gpt-4.1-mini`.
+Across three runs of all 17 cases with `gpt-4.1-mini`, **122 of 126 checks
+passed**:
+
+- **Stats tools: 102 of 102.**
+- **Search tools: 20 of 24.**
+  - The scouting-plus-stats question failed its "then pulled stats" check in
+    all three runs. There are no scouting reports in the index yet, and the
+    agent correctly said so instead of inventing a prospect. The check assumes
+    scouting data exists.
+  - One news answer listed transactions without their dates.
 
 The evals found two failures during development:
 
@@ -130,6 +184,15 @@ The evals found two failures during development:
   agent wrote "two MLB players". Widening the pattern fixed it. String checks
   on free-text answers are brittle in both directions.
 
+Testing the search tools against real data found two more bugs that their unit
+tests missed:
+
+- **News search crashed on ties.** With 19,000 real transactions, two results
+  could tie on score, and the sort then tried to compare two dicts. It now
+  sorts on the score alone.
+- **`lookup_player` returned duplicates.** Edwin Díaz appeared twice in his
+  five results. Results are now de-duplicated by player id.
+
 ### Limitations
 
 - Checks are regexes and number matches. They can't judge whether an answer is
@@ -140,19 +203,10 @@ The evals found two failures during development:
   which it is.
 - The results above use one model. Changing the model or the instructions
   means re-running the evals.
-
-## In progress: search tools
-
-Three search tools are written and unit-tested (`extra_tools.py`, `search/`,
-`comps/`, `scouting/`, `news/`), but they aren't registered with the MCP server
-yet and haven't been evaluated with the agent:
-
-- `similar_pitches`: pitch comps by vector search over Statcast numbers
-  (velocity, spin, movement, release point).
-- `search_scouting`: retrieval over a local collection of scouting reports,
-  filterable by team and position.
-- `search_news`: retrieval over MLB transactions (IL moves, trades, signings),
-  ranked by a blend of meaning and recency.
+- The search-tool cases check only which tool was called, so they pass even
+  when an index is empty. The scouting case passes today with no reports.
+- The news team filter matches by substring, so "Mets" also returns
+  minor-league affiliates such as the St. Lucie Mets.
 
 ## How I built this
 
@@ -168,5 +222,8 @@ AI fixed and finished them. I made the calls where there was a trade-off:
 I worked through the eval design with the AI: checking the process as well as
 the answer, and checking tool arguments rather than only tool names. I wrote the
 first numeric check, and the AI wrote the remaining cases. I tested the tools
-directly from the terminal. The search tools are AI-generated, and I haven't
-reviewed or connected them yet.
+directly from the terminal.
+
+The search tools are AI-generated. I had them connected and tested against real
+data, which found the two bugs above, but I haven't reviewed their design
+choices yet: the pitch features and weights, and the recency blend.
