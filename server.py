@@ -193,5 +193,10 @@ def pitch_mix(mlbam_id: int, start_date: str, end_date: str) -> dict:
     }
 
 
+from extra_tools import register  # noqa: E402
+
+register(mcp)
+
+
 if __name__ == "__main__":
     mcp.run()  # stdio transport: the client launches this file as a subprocess

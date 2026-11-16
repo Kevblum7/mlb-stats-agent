@@ -16,7 +16,8 @@ def test_client_discovers_tools():
             return {t.name: t for t in await server.list_tools()}
 
     tools = asyncio.run(go())
-    assert set(tools) == {"lookup_player", "season_stats", "pitch_mix"}
+    assert set(tools) == {"lookup_player", "season_stats", "pitch_mix",
+                          "similar_pitches", "search_scouting", "search_news"}
     # The model only sees name + schema + description -- check they're there.
     lookup = tools["lookup_player"]
     assert set(lookup.input_schema["required"]) == {"first_name", "last_name"}

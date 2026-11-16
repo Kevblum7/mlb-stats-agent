@@ -230,9 +230,12 @@ async def main() -> int:
     p.add_argument("--only")
     args = p.parse_args()
 
+    # Imported here: addon_cases imports Case from this module.
+    from evals.addon_cases import ADDON_CASES
+
     passed = total = 0
     async with app.stats_server() as server:
-        for case in CASES:
+        for case in CASES + ADDON_CASES:
             if args.only and case.name != args.only:
                 continue
             for k in range(args.runs):
