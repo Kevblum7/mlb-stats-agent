@@ -28,6 +28,64 @@ API = "https://statsapi.mlb.com/api/v1/transactions"
 RECENCY_WEIGHT = 0.25   # 0 = pure meaning match, 1 = newest first regardless of meaning
 HALF_LIFE_DAYS = 30     # a transaction's recency bonus halves every 30 days
 
+# Short names resolve to the MLB club so "Mets" doesn't match "St. Lucie Mets".
+TEAM_ALIASES = {
+    "diamondbacks": "arizona diamondbacks",
+    "dbacks": "arizona diamondbacks",
+    "d-backs": "arizona diamondbacks",
+    "braves": "atlanta braves",
+    "orioles": "baltimore orioles",
+    "red sox": "boston red sox",
+    "cubs": "chicago cubs",
+    "white sox": "chicago white sox",
+    "reds": "cincinnati reds",
+    "guardians": "cleveland guardians",
+    "rockies": "colorado rockies",
+    "tigers": "detroit tigers",
+    "astros": "houston astros",
+    "royals": "kansas city royals",
+    "angels": "los angeles angels",
+    "dodgers": "los angeles dodgers",
+    "marlins": "miami marlins",
+    "brewers": "milwaukee brewers",
+    "twins": "minnesota twins",
+    "mets": "new york mets",
+    "yankees": "new york yankees",
+    "athletics": "athletics",
+    "oakland athletics": "athletics",
+    "phillies": "philadelphia phillies",
+    "pirates": "pittsburgh pirates",
+    "padres": "san diego padres",
+    "giants": "san francisco giants",
+    "mariners": "seattle mariners",
+    "cardinals": "st. louis cardinals",
+    "rays": "tampa bay rays",
+    "rangers": "texas rangers",
+    "blue jays": "toronto blue jays",
+    "nationals": "washington nationals",
+}
+
+
+def normalize_team(team: str) -> str:
+    t = team.strip().lower()
+    return TEAM_ALIASES.get(t, t)
+
+
+def team_matches(it: dict, team: str | None) -> bool:
+    """True if the transaction involves this MLB club.
+
+    Exact match after alias resolution. "Mets" -> "New York Mets", so affiliates
+    like "St. Lucie Mets" and "DSL Mets Blue" do not match.
+    """
+    if not team:
+        return True
+    want = normalize_team(team)
+    for field in (it.get("team") or "", it.get("from_team") or ""):
+        name = field.strip().lower()
+        if name and (name == want or normalize_team(name) == want):
+            return True
+    return False
+
 
 def fetch(start: date, end: date, team_id: int | None = None) -> list[dict]:
     params = {"startDate": start.isoformat(), "endDate": end.isoformat()}
@@ -83,7 +141,7 @@ def search(store: VectorStore, query: str, embed, team: str | None = None,
     cutoff = (today - timedelta(days=since_days)).isoformat() if since_days else ""
 
     def where(it: dict) -> bool:
-        return ((not team or team.lower() in f"{it['team']} {it['from_team']}".lower())
+        return (team_matches(it, team)
                 and (not player or player.lower() in it["player"].lower())
                 and it["date"] >= cutoff)
 

@@ -134,3 +134,11 @@ def test_news_recency_breaks_near_ties(tmp_path, monkeypatch):
     assert out["data_through"] == "2026-11-12"
     recent = transactions.search(store, "trade", fake_embed, team="Mets", since_days=30, today=date(2026, 11, 16))
     assert 2 not in [r["id"] for r in recent["results"]]  # April filtered out
+
+
+def test_news_team_filter_skips_affiliates():
+    assert transactions.team_matches({"team": "New York Mets", "from_team": ""}, "Mets")
+    assert transactions.team_matches({"team": "Atlanta Braves", "from_team": "New York Mets"}, "Mets")
+    assert not transactions.team_matches({"team": "St. Lucie Mets", "from_team": ""}, "Mets")
+    assert not transactions.team_matches({"team": "DSL Mets Blue", "from_team": ""}, "Mets")
+    assert transactions.team_matches({"team": "New York Mets", "from_team": ""}, "New York Mets")

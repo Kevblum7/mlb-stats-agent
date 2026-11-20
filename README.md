@@ -53,6 +53,7 @@ python -m pytest -q               # no API key needed
 
 python agent.py "Who hit more home runs in 2025, Pete Alonso or Rafael Devers?"
 python agent.py                   # interactive chat; remembers earlier questions
+python chat_app.py                # Gradio chatbot UI at http://127.0.0.1:7860
 python -m evals.run_evals --runs 3
 ```
 
